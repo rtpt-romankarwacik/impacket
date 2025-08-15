@@ -147,18 +147,22 @@ class LPSTR(NDRPOINTER):
 
 class WSTR(NDRSTRUCT):
     commonHdr = (
-        ('MaximumCount', '<L=len(Data)//2'),
+        ('MaximumCount', '<L'),
         ('Offset','<L=0'),
-        ('ActualCount','<L=len(Data)//2'),
+        ('ActualCount','<L'),
     )
     commonHdr64 = (
-        ('MaximumCount', '<Q=len(Data)//2'),
+        ('MaximumCount', '<Q'),
         ('Offset','<Q=0'),
-        ('ActualCount','<Q=len(Data)//2'),
+        ('ActualCount','<Q'),
     )
     structure = (
         ('Data',':'),
     )
+
+    def __init__(self, ms_even_workaround=False, **kwargs):
+        self.ms_even_workaround = ms_even_workaround
+        NDRSTRUCT.__init__(self, **kwargs)
 
     def dump(self, msg = None, indent = 0):
         if msg is None:
@@ -178,8 +182,8 @@ class WSTR(NDRSTRUCT):
             except UnicodeDecodeError:
                 import sys
                 self.fields[key] = value.decode(sys.getfilesystemencoding()).encode('utf-16le')
-            self.fields['MaximumCount'] = None
-            self.fields['ActualCount'] = None
+            self.fields['MaximumCount'] = len(value) + (1 if self.ms_even_workaround else 0)
+            self.fields['ActualCount'] = len(value)
             self.data = None        # force recompute
         else:
             return NDR.__setitem__(self, key, value)
@@ -374,6 +378,10 @@ class RPC_UNICODE_STRING(NDRSTRUCT):
         ('Data',LPWSTR),
     )
 
+    def __init__(self, ms_even_workaround=False, **kwargs):
+        NDRSTRUCT.__init__(self, **kwargs)
+        self.ms_even_workaround = ms_even_workaround
+
     def __setitem__(self, key, value):
         if key == 'Data' and isinstance(value, NDR) is False:
             try:
@@ -381,8 +389,13 @@ class RPC_UNICODE_STRING(NDRSTRUCT):
             except UnicodeDecodeError:
                 import sys
                 value = value.decode(sys.getfilesystemencoding())
-            self['Length'] = len(value)*2
-            self['MaximumLength'] = len(value)*2
+            if value[-1] == "\0": # trim NULL byte
+                value = value[:-1]
+            self['Length'] = len(value.encode('utf-16le'))
+            self['MaximumLength'] = len(value.encode('utf-16le'))
+            if self.ms_even_workaround:
+                self['MaximumLength'] = len(value.encode('utf-16le')) + 2 
+                self.fields["Data"].fields["Data"] = WSTR(ms_even_workaround=True)
         return NDRSTRUCT.__setitem__(self, key, value)
 
     def dump(self, msg = None, indent = 0):
