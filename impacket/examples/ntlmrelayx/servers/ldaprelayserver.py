@@ -471,16 +471,17 @@ class CLDAPHandler(Thread):
         self.message, _ = decoder.decode(message, asn1Spec=ParsableLDAPMessage())
 
     def run(self):
-        netlogon_response = NETLOGON_SAM_LOGON_RESPONSE_EX(NtVersion=5, 
+        netlogon_response = NETLOGON_SAM_LOGON_RESPONSE_EX(
+            NtVersion=5, 
             OpCode=23, 
             Sbz=0, 
             Flags=521213,
-            DomainGuid=UUID('645a218b-e184-46ba-a312-fce25ef38b9b'), 
-            DnsForestName=b'lab.redteam.', 
-            DnsDomainName=b'lab.redteam.',
-            DnsHostName=b'win2025vm.lab.redteam.',
-            NetbiosDomainName=b'LAB.',
-            NetbiosComputerName=b'WIN2025VM.',
+            DomainGuid=UUID('e281f5c0-c05f-423d-9add-c0ffee084f27'), 
+            DnsForestName=b'is.ignored.', 
+            DnsDomainName=b'is.ignored.',
+            DnsHostName=b'machine.is.ignored.',
+            NetbiosDomainName=b'IGNORED.',
+            NetbiosComputerName=b'MACHINE.',
             UserName=b'.',
             DcSiteName=b'Default-First-Site-Name.',
             ClientSiteName=b'Default-First-Site-Name.',
