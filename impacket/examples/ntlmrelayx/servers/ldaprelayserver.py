@@ -292,49 +292,50 @@ class LDAPHandler(Thread):
         token = sasl_credentials['credentials']
         #logging.debug("LDAP: Received SPNEGO token: %r" % token)
         
-        if len(token) > 0:
-            neg_token_init = None
-            try:
-                neg_token_init = SPNEGO_NegTokenInit(token.asOctets())
-                mech_token = neg_token_init['MechToken']
-            except:
-                # It's probably a NTLMSSP AUTH packet
-                mech_token = token.asOctets()
-            
-            # Search for the NTLMSSP header
-            ntlm_header = b'NTLMSSP\x00'
-            ntlm_start = mech_token.find(ntlm_header)
-            if ntlm_start == -1:
-                if neg_token_init and len(neg_token_init['MechTypes']) > 0:
-                    if neg_token_init['MechTypes'][0] != TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider'] and \
-                        TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider'] in neg_token_init['MechTypes']:
-                        logging.info("LDAP: NTLM is supported, but not the primary mechtype, so we ask for negotiation")
-                        self.spnego_ntlm_reauth_negTokenResp(ldap_message)
-                    else:
-                        logging.info("LDAP: NTLM is not a supported mechtype")
-                        self.spnego_ntlm_reauth_negTokenResp(ldap_message)
+        if len(token) == 0:
+            return
+        neg_token_init = None
+        try:
+            neg_token_init = SPNEGO_NegTokenInit(token.asOctets())
+            mech_token = neg_token_init['MechToken']
+        except:
+            # It's probably a NTLMSSP AUTH packet
+            mech_token = token.asOctets()
+        
+        # Search for the NTLMSSP header
+        ntlm_header = b'NTLMSSP\x00'
+        ntlm_start = mech_token.find(ntlm_header)
+        if ntlm_start == -1:
+            if neg_token_init and len(neg_token_init['MechTypes']) > 0:
+                if neg_token_init['MechTypes'][0] != TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider'] and \
+                    TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider'] in neg_token_init['MechTypes']:
+                    logging.info("LDAP: NTLM is supported, but not the primary mechtype, so we ask for negotiation")
+                    self.spnego_ntlm_reauth_negTokenResp(ldap_message)
                 else:
-                    logging.error("No NTLM message type")
-                return
-            
-            mech_token = mech_token[ntlm_start:]
-            from impacket.structure import hexdump
-            logging.debug("LDAP: NTLM message from mech_token hexdump:")
-            if logging.getLogger().level == logging.DEBUG:
-                hexdump(mech_token)
-            if not mech_token.startswith(b'NTLMSSP\x00'):
-                logging.error("Unknown NTLM message type")
-                return
-
-            message_type = struct.unpack('<L', mech_token[len('NTLMSSP\x00'):len('NTLMSSP\x00')+4])[0]
-            logging.debug("LDAP: NTLM message type: %d" % message_type)
-            
-            if message_type == 0x01: # NTLMSSP_NEGOTIATE
-                self.handle_negotiate(ldap_message, mech_token, auth_type='spnego')
-            elif message_type == 0x03: # NTLMSSP_AUTH
-                self.handle_auth(ldap_message, mech_token)
+                    logging.info("LDAP: NTLM is not a supported mechtype")
+                    self.spnego_ntlm_reauth_negTokenResp(ldap_message)
             else:
-                logging.error("Unknown NTLM message type: %d" % message_type)
+                logging.error("No NTLM message type")
+            return
+        
+        mech_token = mech_token[ntlm_start:]
+        from impacket.structure import hexdump
+        logging.debug("LDAP: NTLM message from mech_token hexdump:")
+        if logging.getLogger().level == logging.DEBUG:
+            hexdump(mech_token)
+        if not mech_token.startswith(b'NTLMSSP\x00'):
+            logging.error("Unknown NTLM message type")
+            return
+
+        message_type = struct.unpack('<L', mech_token[len('NTLMSSP\x00'):len('NTLMSSP\x00')+4])[0]
+        logging.debug("LDAP: NTLM message type: %d" % message_type)
+        
+        if message_type == 0x01: # NTLMSSP_NEGOTIATE
+            self.handle_negotiate(ldap_message, mech_token, auth_type='spnego')
+        elif message_type == 0x03: # NTLMSSP_AUTH
+            self.handle_auth(ldap_message, mech_token)
+        else:
+            logging.error("Unknown NTLM message type: %d" % message_type)
 
     def handle_negotiate(self, ldap_message, negotiate_message_data, auth_type='spnego'):
         if self.server.config.mode.upper() == 'REFLECTION':
