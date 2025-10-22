@@ -137,6 +137,9 @@ class LDAPHandler(Thread):
             vals = univ.SetOf()
             if str(requested_attribute) == 'defaultNamingContext':
                 vals.append(ldapasn1.AttributeValue('DC=impacket,DC=local'))
+            #if str(requested_attribute) == 'supportedSASLMechanisms':
+            #    # this can be used to force GSS-SPNEGO, maybe interesting for debugging
+            #    vals.append(ldapasn1.AttributeValue('GSS-SPNEGO'))
             pa['vals'] = vals
             attributes.append(pa)
         search_res_entry['attributes'] = attributes
@@ -363,17 +366,21 @@ class LDAPHandler(Thread):
         bind_response = ldapasn1.BindResponse()
         bind_response['diagnosticMessage'] = ''
 
-        if auth_type == 'spnego':
+        if auth_type == 'spnego' and not negotiate_message_data.startswith(b'NTLMSSP\x00'):
             bind_response['resultCode'] = ldapasn1.ResultCode('saslBindInProgress')
             bind_response['matchedDN'] = ''
 
             resp_token = SPNEGO_NegTokenResp()
-            resp_token['negState'] = b'\x01'  # accept-incomplete
-            resp_token['supportedMech'] = TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider']
-            resp_token['responseToken'] = self.challengeMessage.getData()
+            resp_token['NegState'] = b'\x01'  # accept-incomplete
+            resp_token['SupportedMech'] = TypesMech['NTLMSSP - Microsoft NTLM Security Support Provider']
+            resp_token['ResponseToken'] = self.challengeMessage.getData()
 
             bind_response['serverSaslCreds'] = resp_token.getData()
-        
+        elif auth_type == 'spnego':
+            bind_response['resultCode'] = ldapasn1.ResultCode('saslBindInProgress')
+            bind_response['matchedDN'] = ''
+
+            bind_response['serverSaslCreds'] = self.challengeMessage.getData()
         elif auth_type == 'sicily':
             bind_response['resultCode'] = ldapasn1.ResultCode('saslBindInProgress')
             bind_response['matchedDN'] = self.challengeMessage.getData()
