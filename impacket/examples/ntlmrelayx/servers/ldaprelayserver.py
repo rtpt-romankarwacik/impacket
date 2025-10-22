@@ -470,6 +470,40 @@ class CLDAPResponseServer(LDAPRelayServer):
             handler = CLDAPHandler(addr, message, self)
             handler.start()
 
+# MS-ADTS 6.3.1.2 DS_FLAG Options Bits
+# https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/f55d3f53-351d-4407-940e-f53eb6154af0
+# https://github.com/microsoft/win32metadata/blob/main/generation/WinSDK/RecompiledIdlHeaders/um/DsGetDC.h
+class DS_FLAG_OPTIONS:
+    DS_PDC_FLAG = 0x00000001 # The server holds the PDC FSMO role (PdcEmulationMasterRole). FSMO roles are defined in section 3.1.1.1.11. Certain updates can be performed only on the holder of the PDC FSMO role (see Updates Performed Only on FSMOs (section 3.1.1.5.1.8)).
+    DS_GC_FLAG = 0x00000004 # The server is a GC server and will accept and process messages directed to it on the global catalog ports (see section 3.1.1.3.1.10).
+    DS_LDAP_FLAG = 0x00000008 # The server is an LDAP server.
+    DS_DS_FLAG = 0x00000010 # The server is a DC.
+    DS_KDC_FLAG = 0x00000020 # The server is running the Kerberos Key Distribution Center service.
+    DS_TIMESERV_FLAG = 0x00000040 # The Win32 Time Service, as specified in [MS-W32T], is present on the server.
+    DS_CLOSEST_FLAG = 0x00000080 # The server is in the same site as the client. This is a hint to the client that it is well-connected to the server in terms of speed.
+    DS_WRITABLE_FLAG = 0x00000100 # Indicates that the server is not an RODC. As described in section 3.1.1.1.9, all NC replicas hosted on an RODC do not accept originating updates.
+    DS_GOOD_TIMESERV_FLAG = 0x00000200 # The server is a reliable time server.
+    DS_NDNC_FLAG = 0x00000400 # The NC is an application NC.
+    DS_SELECT_SECRET_DOMAIN_6_FLAG = 0x00000800 # The server is an RODC.
+    DS_FULL_SECRET_DOMAIN_6_FLAG = 0x00001000 # The server is a writable DC, not running Windows 2000 Server operating system through Windows Server 2003 R2 operating system.
+    DS_WS_FLAG = 0x00002000 # The Active Directory Web Service, as specified in [MS-ADDM], is present on the server.
+    DS_DS_8_FLAG = 0x00004000 # The server is not running Windows 2000 operating system through Windows Server 2008 R2 operating system.
+    DS_DS_9_FLAG = 0x00008000 # The server is not running Windows 2000 through Windows Server 2012 operating system.
+    DS_DS_10_FLAG = 0x00010000 # DC is running Windows Server 2016 or later
+    DS_KEY_LIST_FLAG = 0x00020000 #  DC supports key list requests
+    DS_DS_13_FLAG = 0x00040000 #  DC is running Windows Server 2025 or later
+    DS_DNS_CONTROLLER_FLAG = 0x20000000 # The server has a DNS name.
+    DS_DNS_DOMAIN_FLAG = 0x40000000 # The NC is a default NC.
+    DS_DNS_FOREST_FLAG = 0x80000000 # The NC is the forest root.
+
+    DS_PING_FLAGS = 0x000FFFFF
+
+    default_flags = DS_PDC_FLAG | DS_GC_FLAG | DS_LDAP_FLAG \
+        | DS_DS_FLAG | DS_KDC_FLAG | DS_TIMESERV_FLAG \
+        | DS_CLOSEST_FLAG | DS_WRITABLE_FLAG | DS_GOOD_TIMESERV_FLAG \
+        | DS_FULL_SECRET_DOMAIN_6_FLAG | DS_WS_FLAG | DS_DS_8_FLAG \
+        | DS_DS_9_FLAG | DS_DS_10_FLAG | DS_KEY_LIST_FLAG | DS_DS_13_FLAG
+
 class CLDAPHandler(Thread):
     def __init__(self, addr, message: bytes, server: CLDAPResponseServer):
         Thread.__init__(self)
@@ -480,9 +514,9 @@ class CLDAPHandler(Thread):
     def run(self):
         netlogon_response = NETLOGON_SAM_LOGON_RESPONSE_EX(
             NtVersion=5, 
-            OpCode=23, 
+            OpCode=23,
             Sbz=0, 
-            Flags=521213,
+            Flags=DS_FLAG_OPTIONS.default_flags,
             DomainGuid=UUID('e281f5c0-c05f-423d-9add-c0ffee084f27'), 
             DnsForestName=b'is.ignored.', 
             DnsDomainName=b'is.ignored.',
